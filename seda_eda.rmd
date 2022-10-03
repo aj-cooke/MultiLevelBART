@@ -1,0 +1,253 @@
+---
+title: "SEDA EDA"
+author: "Andy Cooke"
+date: '`r Sys.Date()`'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Prepare Data
+
+```{r}
+library(dplyr)
+library(haven)
+library(ggmap)
+library(data.table)
+library(mapproj)
+library(GGally) 
+```
+
+
+# is grade nested in year or 1:1?
+
+```{r}
+files <- list.files(path = "./SEDA/", pattern = "*.dta")
+datasets <- list()
+for(i in 1:length(files)){
+  datasets <- append(datasets, list(read_dta(paste0("SEDA/", files[i]))))
+}
+files <- chartr(" ", "_", files)
+files <- sub(".dta", "", files)
+files <- chartr(".", "_", files)
+names(datasets) <- files
+```
+
+```{r}
+substrRight <- function(x, n){
+  substr(x, nchar(x)-n+1, nchar(x))
+}
+
+remove_y_cols <- function(data){
+  tmp <- colnames(data)
+  data <- data %>% select(tmp[substrRight(tmp, 2) != '.y'])
+  tmp <- colnames(data)
+  tmp <- gsub(".x", "", tmp)
+  colnames(data) <- tmp
+  return(data)
+}
+```
+
+```{r}
+# still duplicating columns after removing .y??
+county_joins <- c('sedacounty', 'subcat', 'subgroup', 'fips', 'stateabb', 'gradecenter', 'gap', 'sedacountyname')
+seda_counties <- datasets$seda_county_pool_cs_4_1
+seda_counties <- merge(seda_counties, datasets$seda_county_pool_gcs_4_1, all =T, by = county_joins)
+seda_counties <- merge(seda_counties, datasets$seda_county_poolsub_cs_4_1, all =T, by = county_joins)
+seda_counties <- merge(seda_counties, datasets$seda_county_poolsub_gcs_4_1, all =T, by = county_joins)
+
+seda_counties <- remove_y_cols(seda_counties)
+
+seda_counties_all <- seda_counties %>% filter(subcat == 'all')
+seda_counties_race <- seda_counties %>% filter(subcat == 'race')
+seda_counties_gender <- seda_counties %>% filter(subcat == 'gender')
+seda_counties_ecd <- seda_counties %>% filter(subcat == 'ecd')
+
+long_joins <- c('sedacounty', 'year', 'grade', 'fips')
+seda_long <- datasets$seda_covariates_test_scores_marijuna
+seda_long <- merge(seda_long, datasets$seda_cov_county_long_4_1, all=T, by = long_joins)%>%
+  distinct(sedacounty, year, grade, .keep_all = TRUE)
+seda_long <- remove_y_cols(seda_long)
+seda_long <- merge(seda_long, datasets$seda_cov_county_poolyr_4_1, all = T, by = c('year', 'sedacounty'))
+seda_long <- remove_y_cols(seda_long)
+dupes <- colnames(seda_long)
+dupes <- dupes[duplicated(dupes)]
+seda_long <- seda_long %>% select(-dupes)
+```
+
+# Descriptive
+
+```{r}
+seda_long_sort <- seda_long %>%
+  arrange(sedacounty, grade, year)
+seda_long_sort
+```
+
+Year is nested in grade which is nested in county.
+
+```{r}
+county_pair_cols <- c('tot_asmts', 'cellcount', 'mn_asmts', 'cs_mn_avg_ol', 
+                      'cs_mn_coh_ol', 'gcs_mn_avg_ol') # add more
+ggpairs(subset(seda_counties_all, select = county_pair_cols))
+```
+
+```{r}
+corr_county <- cor(na.omit(seda_counties_all[,9:ncol(seda_counties_all)]))
+corr_county
+```
+
+There is high correlation between variables with similar suffices and gcs to cs counterparts.
+
+```{r}
+long_pair_cols <- c("urban", "perfl", "totenrl", "lninc50asn", "povertyall", "unempall",
+                    "sesblk", "snapall")
+ggpairs(subset(seda_long, select = long_pair_cols))
+```
+
+```{r}
+corr_long <- cor(na.omit(subset(seda_long, select = names(seda_long[, sapply(seda_long, is.numeric)]))))
+corr_long
+```
+
+Some columns have 100% correlation, some have only one value. These can be cleaned for further analysis.
+
+# Maps
+
+```{r}
+county_fix <- function(col){
+  # make it a loop
+  col = tolower(col)
+  col = sub(" county", "", col)
+  col = sub(" census area", "", col)
+  col = sub(" parish", "", col)
+  col = sub(" municipio", "", col)
+  col = sub(" borogh", "", col)
+  col = sub(" city", "", col)
+  col = sub("'", "", col)
+  col = sub(" municipality", "", col)
+  col = sub("dekalb", "de kalb", col)
+  col = sub("dewitt", "de witt", col)
+  col = sub("desoto", "de soto", col)
+  col = sub("dupage", "du page", col)
+  col = sub("lasalle", "la salle", col)
+  col = sub("o'brien", "obrien", col)
+  col = sub("oglala lakota", "oglala dakota", col)
+  col = sub("st. ", "st ", col)
+  return(col)
+}
+```
+
+
+```{r}
+neglog <- function(col){
+  c_sign <- if_else(col >= 0, 1, -1)
+  av <- abs(col)
+  lcol <- log(av)
+  final <- lcol * c_sign
+  final <- if_else(final == -Inf, 0, final)
+  return(final)
+}
+```
+
+```{r}
+# need one row per county or one row per county per facet!
+county_map_plot <- function(data, target, county_col = 'sedacountyname', 
+                            state_abb_col = "stateabb", log = F, facet_col = 'None'){
+  data[,'county_col'] <- data[,county_col]
+  data$c_fix <- county_fix(data$county_col)
+  data[,'state_abb_col'] <- data[,state_abb_col]
+  data[,'target'] <- data[,target]
+  if(facet_col != 'None'){
+    data[,'facet_col'] <- data[,facet_col]
+  }
+  
+  counties <- map_data("county")
+  states <- data.frame(name = tolower(state.name), abb = state.abb)
+  counties <- merge(counties, states, all.x = TRUE, by.x = "region", by.y = "name")
+  
+  if(log == T){
+    data$target <- neglog(data$target)
+  }
+  data[,target] = data$target
+  
+  data <- merge(counties, data, all.x=TRUE, by.y = c("c_fix", "state_abb_col"), by.x = c('subregion', 'abb')) %>%
+    arrange(order)
+  
+  p <- ggplot(data, aes(x=long, y=lat, group=group, fill=target)) + 
+    ggtitle(paste0(target, " by county")) + 
+    geom_polygon()+
+    coord_map()
+  if(facet_col != 'None'){
+    p <- p + facet_wrap(~facet_col)
+  }
+  print(p)
+}
+```
+
+
+```{r}
+county_map_cols <- c(county_pair_cols)
+log_val <- c(T, F, T, F, F, F)
+
+for(i in 1:length(county_map_cols)){
+  county_map_plot(seda_counties_all, county_map_cols[i], log = log_val[i])
+}
+```
+
+```{r}
+for(i in 1:length(county_map_cols)){
+  county_map_plot(seda_counties_race, county_map_cols[i], log = log_val[i], facet_col = 'subgroup')
+}
+```
+
+```{r}
+for(i in 1:length(county_map_cols)){
+  county_map_plot(seda_counties_gender, county_map_cols[i], log = log_val[i], facet_col = 'subgroup')
+}
+```
+
+```{r}
+for(i in 1:length(county_map_cols)){
+  county_map_plot(seda_counties_ecd, county_map_cols[i], log = log_val[i], facet_col = 'subgroup')
+}
+```
+
+
+# By Grade
+
+## Univariate
+```{r}
+grade_plot <- function(data, target){
+  data[,'target'] <- data[,target]
+  
+  data <- data %>% 
+    group_by(grade, year) %>% 
+    summarise(target = mean(target, na.rm = T))
+  
+  p <- ggplot(data, aes(x=year, y=target,color = as.factor(grade))) +
+    geom_line() + 
+    ggtitle(paste0(target, " by grade over time"))
+  print(p)
+}
+```
+
+
+```{r}
+long_targets <- c(long_pair_cols)
+for(i in long_targets){
+  grade_plot(seda_long, i)
+}
+```
+
+
+## Followup: over time by cohort instead of moving grade
+
+
+
+
+
+
+
+

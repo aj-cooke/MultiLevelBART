@@ -39,6 +39,23 @@ group_assign <- function(x, group_list){
   return(which(group_list == min(group_list[group_list >= x])))
 }
 
+linear_treatment <- function(data, thresh = 0.5){
+  grouped <- data %>%
+    group_by(group) %>%
+    summarise(across(
+      .cols = where(is.numeric), 
+      .fns = list(Mean = mean), na.rm = TRUE, 
+      .names = "{col}_{fn}"
+    ))
+  grouped <- data.frame(grouped)
+  betas <- rnorm(ncol(grouped) - 1)
+  grouped$propensity <- as.vector(as.matrix(grouped[,2:ncol(grouped)]) %*% betas)
+  grouped$propensity <- (grouped$propensity-min(grouped$propensity))/(max(grouped$propensity)-min(grouped$propensity))
+  grouped$z <- if_else(grouped$propensity >= thresh, 1, 0)
+  data <- merge(data, subset(grouped, select = c("group", "z")), by = "group", all.x = T, sort = F)
+  return(data)
+}
+
 gen_multilevel <- function(n, n_groups, k_ind, k_group, group_p = "none"){
   data <- data.frame(generate_mvn(n, k_ind)) # first just ind level
   
@@ -77,13 +94,12 @@ gen_multilevel <- function(n, n_groups, k_ind, k_group, group_p = "none"){
     grouped <- subset(grouped, select = c("group", name))
     data <- merge(data, grouped, by.x = "group", by.y = "group", all.x = T, sort = F)
   }
+  
+  # assign treatment
+  
+  data <- linear_treatment(data)
   return(data)
 }
 
-
-data = gen_multilevel(100, 4, 3,3)
-
-
-
-
+data = gen_multilevel(10000, 6, 7,3)
 

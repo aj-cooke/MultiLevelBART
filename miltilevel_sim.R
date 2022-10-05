@@ -39,7 +39,8 @@ group_assign <- function(x, group_list){
   return(which(group_list == min(group_list[group_list >= x])))
 }
 
-linear_treatment <- function(data, thresh = 0.5){
+# propensity is arbitrary number min-max scaled. Could change to expit
+linear_treatment_group <- function(data){
   grouped <- data %>%
     group_by(group) %>%
     summarise(across(
@@ -51,12 +52,20 @@ linear_treatment <- function(data, thresh = 0.5){
   betas <- rnorm(ncol(grouped) - 1)
   grouped$propensity <- as.vector(as.matrix(grouped[,2:ncol(grouped)]) %*% betas)
   grouped$propensity <- (grouped$propensity-min(grouped$propensity))/(max(grouped$propensity)-min(grouped$propensity))
-  grouped$z <- if_else(grouped$propensity >= thresh, 1, 0)
+  grouped$z <- rbinom(nrow(grouped), 1, grouped$propensity)
   data <- merge(data, subset(grouped, select = c("group", "z")), by = "group", all.x = T, sort = F)
   return(data)
 }
 
-gen_multilevel <- function(n, n_groups, k_ind, k_group, group_p = "none"){
+linear_treatment_ind <- function(data){
+  betas <- rnorm(ncol(data)-1)
+  data$propensity <- as.vector(as.matrix(data[,2:ncol(data)]) %*% betas)
+  data$propensity <- (data$propensity-min(data$propensity))/(max(data$propensity)-min(data$propensity))
+  data$z <- rbinom(nrow(data), 1, data$propensity)
+  return(data)
+}
+
+gen_multilevel <- function(n, n_groups, k_ind, k_group, group_p = "none", assignment = "group"){
   data <- data.frame(generate_mvn(n, k_ind)) # first just ind level
   
   # randomly assign groups
@@ -71,7 +80,7 @@ gen_multilevel <- function(n, n_groups, k_ind, k_group, group_p = "none"){
   
   # break out into group to de-standardize
   
-  for( i in unique(data$group)){
+  for(i in unique(data$group)){
     mus <- runif(k_ind)
     sigs <- runif(k_ind)
     data[data$group == i, 1:k_ind] = sweep(data[data$group == i, 1:k_ind], 2, sigs, "*")
@@ -96,10 +105,10 @@ gen_multilevel <- function(n, n_groups, k_ind, k_group, group_p = "none"){
   }
   
   # assign treatment
+  if(assignment == "group"){data <- linear_treatment_group(data)}
+  else if(assignment %in% c("ind", "individual")){data <- linear_treatment_ind(data)}
   
-  data <- linear_treatment(data)
   return(data)
 }
 
-data = gen_multilevel(10000, 6, 7,3)
-
+data = gen_multilevel(10000, 6, 7,3, assignment = "ind")

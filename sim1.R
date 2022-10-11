@@ -74,12 +74,3 @@ hist(fitted(bart_fit))
 
 bart_fit <- dbarts::bart2(z ~ . -p.score, data = dat_filtered, n.chains = 10)
 hist(fitted(bart_fit))
-
-
-j <-  sample(1:20, 1000, replace = TRUE, p = c(.01, .01, .01, 
-                                         .02, .02, .02,
-                                         .03, .03, .03,
-                                         .05, .05, .05, 
-                                         .07, .07, .07,
-                                         .08, .08, .1, 
-                                         .1,.1))

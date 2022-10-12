@@ -74,3 +74,35 @@ hist(fitted(bart_fit))
 
 bart_fit <- dbarts::bart2(z ~ . -p.score, data = dat_filtered, n.chains = 10)
 hist(fitted(bart_fit))
+
+# bart with 5 number summary 
+tapply(X[, 1],dat$j, summary)
+five_number <- lapply(1:ncol(X), function(i){
+  temp <- tapply(X[,i], dat$j, summary) %>% 
+    bind_rows()
+  names(temp) <- c(paste0('min_', i),
+                   paste0('q25_', i), 
+                   paste0('median_', i), 
+                   paste0('mean_', i), 
+                   paste0('q75_', i), 
+                   paste0('max_', i))
+  
+  return(temp)
+  })
+
+five_number <- five_number %>% 
+  bind_cols() %>% 
+  mutate_all(as.double)
+ordered_z <- dat %>% 
+  group_by(j) %>% 
+  select(z, j) %>% 
+  arrange(j) %>% 
+  distinct() %>% 
+  ungroup() %>% 
+  select(z) 
+
+five_number$z <- ordered_z$z
+rm(ordered_z)
+
+bart_fit <- dbarts::bart2(z ~ . , data = five_number, n.chains = 10)
+hist(fitted(bart_fit))

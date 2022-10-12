@@ -1,3 +1,6 @@
+library(dplyr)
+library(dbarts)
+
 dat <- read.csv('~/Downloads/classroom.csv') # change path to fit your env
 y <- dat$mathgain
 dat <- dat %>% dplyr::select(-mathgain, -mathknow, -classid, -yearstea)
@@ -80,6 +83,12 @@ dat_rank <- dat %>%
 fit <-dbarts::bart2(z~ ., data = dat_rank)
 hist(fitted(fit))
 
+# logistic regression 
+logistic <- glm(z ~ housepov + avg_mathkind + avg_mathprep, data = dat, family = binomial)
+hist(fitted(logistic))
+
+logistic <- glm(z ~ housepov*avg_mathkind*avg_mathprep, data = dat, family = binomial)
+hist(fitted(logistic))
 
 
 

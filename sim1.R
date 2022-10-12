@@ -1,9 +1,8 @@
 library(dbarts)
 library(rstanarm)
-library(MASS)
 library(dplyr)
 
-# basic
+# basic dpg requiors you have MASS installed
 set.seed(2)
 R <- matrix(NA, nrow = 10, ncol = 10)
 diag(R) <- 1
@@ -76,7 +75,6 @@ bart_fit <- dbarts::bart2(z ~ . -p.score, data = dat_filtered, n.chains = 10)
 hist(fitted(bart_fit))
 
 # bart with 5 number summary 
-tapply(X[, 1],dat$j, summary)
 five_number <- lapply(1:ncol(X), function(i){
   temp <- tapply(X[,i], dat$j, summary) %>% 
     bind_rows()
@@ -92,7 +90,9 @@ five_number <- lapply(1:ncol(X), function(i){
 
 five_number <- five_number %>% 
   bind_cols() %>% 
-  mutate_all(as.double)
+  mutate_all(as.double) %>% 
+  dplyr::select(-contains('mean'))
+
 ordered_z <- dat %>% 
   group_by(j) %>% 
   select(z, j) %>% 
@@ -106,3 +106,5 @@ rm(ordered_z)
 
 bart_fit <- dbarts::bart2(z ~ . , data = five_number, n.chains = 10)
 hist(fitted(bart_fit))
+
+

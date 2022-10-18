@@ -1,0 +1,200 @@
+---
+title: "BART_Problem_Analysis"
+author: "Andy Cooke"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(dbarts)
+library(rstanarm)
+library(dplyr)
+library(MASS)
+library(randomForest)
+library(xgboost)
+library(tree)
+library(tidyr)
+source('multilevel_sim.R')
+```
+
+## Comparing with other models
+
+```{r}
+dat <- gen_multilevel(1000, 40, 7, 3)
+colnames(dat) <- c('j', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8', 'X9', 'X10', 'z', 'p.score')
+hist(dat$p.score, main = 'True propensity score', xlab = 'p.score')
+
+dat_filtered <- dat %>% 
+  group_by(j) %>% 
+  summarise_at(vars(1:12), mean)
+```
+
+### Logistic Regression
+
+```{r}
+fit <- glm(z ~ . -p.score -j, family = binomial, data = dat)
+hist(fitted(fit))
+```
+
+```{r}
+fit <- glm(z ~ . -p.score -j, family = binomial, data = dat_filtered)
+hist(fitted(fit))
+```
+### Decision Tree
+```{r}
+fit <- tree(z ~ . -p.score -j, data = dat_filtered)
+hist(predict(fit, dat_filtered))
+
+fit <- tree(z ~ . -p.score -j, data = dat)
+hist(predict(fit, dat))
+```
+
+### Random Forest
+```{r}
+fit <- randomForest(as.factor(z) ~ . -p.score, data = dat_filtered)
+hist(predict(fit, dat_filtered, type = 'prob')[,2])
+
+fit <- randomForest(as.factor(z) ~ . -p.score, data = dat)
+hist(predict(fit, dat, type = 'prob')[,2])
+```
+
+
+### XGBoost
+```{r}
+xgb_train <- xgb.DMatrix(data = data.matrix(dat_filtered %>% dplyr::select(-p.score, -z)), label = dat_filtered$z)
+fit <- xgb.train(data = xgb_train, nrounds = 100, max_depth = 2)
+hist(predict(fit, xgb_train, type = 'prob'))
+
+xgb_train <- xgb.DMatrix(data = data.matrix(dat %>% dplyr::select(-p.score, -z)), label = dat$z)
+fit <- xgb.train(data = xgb_train, nrounds = 100, max_depth = 2)
+hist(predict(fit, xgb_train, type = 'prob'))
+```
+
+### BART
+
+```{r}
+bart_fit <- dbarts::bart2(z ~ . -p.score, data = dat, n.chains = 10)
+hist(fitted(bart_fit))
+
+bart_fit <- dbarts::bart2(z ~ . -p.score -j, data = dat, n.chains = 10)
+hist(fitted(bart_fit))
+
+bart_fit <- dbarts::bart2(z ~ . -p.score -j, data = dat_filtered, n.chains = 10)
+hist(fitted(bart_fit))
+
+bart_fit <- dbarts::bart2(z ~ . -p.score, data = dat_filtered, n.chains = 10)
+hist(fitted(bart_fit))
+```
+
+
+## Changing number of individuals and groups
+
+```{r}
+INDIVIDUALS <- c(500, 500, 1000, 1000, 1000, 10000, 10000, 100000, 100000)
+GROUPS <- c(40, 100, 10, 40, 250, 50, 500, 100, 500)
+
+for(i in 1:length(INDIVIDUALS)){
+  dat <- gen_multilevel(INDIVIDUALS[i], GROUPS[i], 7, 3)
+  colnames(dat) <- c('j', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8', 'X9', 'X10', 'z', 'p.score')
+  hist(dat$p.score, main = 'True propensity score', xlab = 'p.score')
+  
+  dat_filtered <- dat %>% 
+    group_by(j) %>% 
+    summarise_at(vars(1:12), mean)
+    
+  # bart 
+  bart_fit <- dbarts::bart2(z ~ . -p.score, data = dat, n.chains = 10)
+  hist(fitted(bart_fit))
+    
+  bart_fit <- dbarts::bart2(z ~ . -p.score -j, data = dat_filtered, n.chains = 10)
+  hist(fitted(bart_fit))
+}
+```
+
+
+
+## Tuning Alpha, Beta, K, and number of trees (ADD CALIBRATION)
+
+```{r}
+dat <- gen_multilevel(1000, 40, 7, 3)
+colnames(dat) <- c('j', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8', 'X9', 'X10', 'z', 'p.score')
+hist(dat$p.score, main = 'True propensity score', xlab = 'p.score')
+
+dat_filtered <- dat %>% 
+  group_by(j) %>% 
+  summarise_at(vars(1:12), mean)
+
+a <- c(0.95, 0.5, 0.25)
+b <- c(0.1, 1, 2, 5)
+k <- c(1,2,4, 8)
+nt <- c(10, 25, 100, 200)
+
+params <- crossing(a = a, b = b, k = k, nt = nt)
+
+for(i in 1:nrow(params)){
+  # bart 
+  bart_fit <- dbarts::bart2(z ~ . -p.score, data = dat, n.chains = 10,
+                            n.trees = params$nt[i],
+                            k = params$k[i],
+                            power = params$b[i],
+                            base = params$a[i])
+  hist(fitted(bart_fit), main = paste0('Ind, K: ', params$k[i], ' n.trees: ', params$nt[i],
+                                       ' b: ', params$b[i], ' a: ', params$a[i]))
+  
+  bart_fit <- dbarts::bart2(z ~ . -p.score -j, data = dat_filtered, n.chains = 10,
+                            n.trees = params$nt[i],
+                            k = params$k[i],
+                            power = params$b[i],
+                            base = params$a[i])
+  hist(fitted(bart_fit), main = paste0('Ind, K: ', params$k[i], ' n.trees: ', params$nt[i],
+                                       ' b: ', params$b[i], ' a: ', params$a[i]))
+  
+}
+```
+
+
+## One variable
+```{r}
+INDIVIDUALS <- 1000
+GROUPS <- 40
+
+X <- rnorm(INDIVIDUALS, 0, 3)
+j <- sample(1:GROUPS, INDIVIDUALS, replace = TRUE)
+dat <- data.frame(X, j)
+dat <- dat %>% 
+  group_by(j) %>% 
+  mutate_at(vars(1:1), mean)
+
+betas <- rnorm(1, 0, 1)
+
+loggits <- as.matrix(dat[, 1])%*%betas 
+dat$p.score <- as.vector(exp(loggits)/(1 + exp(loggits)))
+hist(dat$p.score, main = 'True propensity score', xlab = 'p.score')
+
+dat$j <- as.factor(dat$j)
+
+dat <- dat %>% 
+  dplyr::select(p.score, j) %>% 
+  distinct() %>% 
+  mutate(z = rbinom(1, 1, p.score)) %>% 
+  full_join(dat) %>% 
+  ungroup()
+
+dat_filtered <- dat %>% distinct()
+
+bart_fit <- dbarts::bart2(z ~ . -p.score -j, data = dat, n.chains = 10)
+hist(fitted(bart_fit))
+
+bart_fit <- dbarts::bart2(z ~ . -p.score -j, data = dat_filtered, n.chains = 10)
+hist(fitted(bart_fit))
+```
+
+
+
+
+

@@ -1,38 +1,18 @@
 library(dbarts)
 library(rstanarm)
 library(dplyr)
+source('multilevel_sim.R')
 
-# basic dpg requiors you have MASS installed
-set.seed(2)
-R <- matrix(NA, nrow = 10, ncol = 10)
-diag(R) <- 1
-R[lower.tri(R)] <- 0
-R[upper.tri(R)] <- t(R)[upper.tri(R)]
-X <- MASS::mvrnorm(1000, rep(0, 10), Sigma = R)
-j <- sample(1:40, 1000, replace = TRUE)
-dat <- data.frame(X, j)
-dat <- dat %>% 
-  group_by(j) %>% 
-  mutate_at(vars(1:10), mean) 
-
-betas <- rnorm(10, .25, .6)
-
-loggits <- as.matrix(dat[, 1:10])%*%betas 
-dat$p.score <- as.vector(exp(loggits)/(1 + exp(loggits)))
+dat <- gen_multilevel(1000, 40, 7, 3)
+colnames(dat) <- c('j', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8', 'X9', 'X10', 'z', 'p.score')
 hist(dat$p.score, main = 'True propensity score', xlab = 'p.score')
 
-dat$j <- as.factor(dat$j)
+dat_filtered <- dat %>% 
+  group_by(j) %>% 
+  summarise_at(vars(2:12), mean)
 
-dat <- dat %>% 
-  dplyr::select(p.score, j) %>% 
-  distinct() %>% 
-  mutate(z = rbinom(1, 1, p.score)) %>% 
-  full_join(dat) %>% 
-  ungroup()
-  
-
-dat_filtered <- dat %>% distinct()
-
+X <- as.matrix(dat[,2:11])
+j <- dat$j
 
 # loggistic regression 
 fit <- glm(z ~ . -p.score -j, family = binomial, data = dat)
@@ -53,7 +33,6 @@ hist(fitted(fit))
 
 fit <- glm(dat$z ~ X, family = binomial)
 hist(fitted(fit))
-
 
 fit <- glm(dat$z ~ as.factor(j), family = binomial)
 hist(fitted(fit))
@@ -86,7 +65,7 @@ five_number <- lapply(1:ncol(X), function(i){
                    paste0('max_', i))
   
   return(temp)
-  })
+})
 
 five_number <- five_number %>% 
   bind_cols() %>% 
@@ -95,16 +74,15 @@ five_number <- five_number %>%
 
 ordered_z <- dat %>% 
   group_by(j) %>% 
-  select(z, j) %>% 
+  dplyr::select(z, j) %>% 
   arrange(j) %>% 
   distinct() %>% 
   ungroup() %>% 
-  select(z) 
+  dplyr::select(z) 
 
 five_number$z <- ordered_z$z
 rm(ordered_z)
 
 bart_fit <- dbarts::bart2(z ~ . , data = five_number, n.chains = 10)
 hist(fitted(bart_fit))
-
 

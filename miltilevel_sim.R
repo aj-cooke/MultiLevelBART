@@ -11,7 +11,7 @@ generate_mvn <- function(n, k, mu = "none", R = "none"){
     off_diag <- c()
     
     for(i in rev(1:(k-1))){
-      off_diag <- c(off_diag, runif(i, -0.99, 0.99))
+      off_diag <- c(off_diag, runif(i, -0.8, 0.8))
     }
     
     R[lower.tri(R)] <- off_diag
